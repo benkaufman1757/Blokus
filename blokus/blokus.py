@@ -139,13 +139,16 @@ class Piece:
                 yield reflection(rotation(self.shape))
 
 class Player:
-    def __init__(self, player_id:int) -> None:
+    def __init__(self, player_id:int, heuristic:str='random') -> None:
         if player_id < 1:
             raise Exception('Invalid player id')
         self.id = player_id
         self.pieces = [Piece(piece, self.id) for piece in ALL_PIECES]
+        self.heuristic = heuristic
+        self.n_plays = 0
 
     def get_valid_moves(self, board, first_move=None):
+        # yield?
         valid_moves = []
         remaining_piece_indexes = []
         for index, piece in enumerate(self.pieces):
@@ -169,6 +172,13 @@ class Player:
             if not piece.placed:
                 remaining_piece_indexes.append(index)
         shuffle(remaining_piece_indexes)
+        # after shuffling sort the indexes of the pieces by size (descending)
+
+        if self.heuristic == 'big_first':
+            sizes = [self.pieces[piece].n_tiles for piece in remaining_piece_indexes]
+            indices_by_size = list(zip(remaining_piece_indexes, sizes))
+            remaining_piece_indexes = [x[0] for x in sorted(indices_by_size, key=lambda x: -x[1])]
+
         for piece in remaining_piece_indexes:
             # maybe placed pieces save "playable" locations
             for y, board_row in enumerate(board.state):
@@ -181,6 +191,10 @@ class Player:
                                 return self.pieces[piece], x, y
         return None, None, None
 
+    def has_move(self, board):
+        move, _, _ = self.get_move(board)
+        return move is not None
+
     def score(self):
         # not putting in the +5 for using 1 piece last
         return sum([piece.n_tiles for piece in self.pieces if not piece.placed])
@@ -190,38 +204,50 @@ class Player:
 #         super(MaxNPlayer, self).__init__(*args, **kwargs)
 #         self.max_depth = max_depth
 
-#     def get_move(self, board, players, turn, first_move=None):
-#         # board.draw_board()
-#         board_copy = deepcopy(board)
-#         # board_copy.draw_board()
-#         players_copy = deepcopy(players)
-#         score, move = self._minimax(0, board_copy, players_copy, turn, first_move=first_move)
-#         print(score)
-#         return move
+    # def get_move(self, board, players, turn, first_move=None):
+    #     # board.draw_board()
+    #     board_copy = deepcopy(board)
+    #     # board_copy.draw_board()
+    #     players_copy = deepcopy(players)
+    #     score, move = self._minimax(0, board_copy, players_copy, turn, first_move=first_move)
+    #     print(score)
+    #     return move
 
-#     def _minimax(self, current_depth, board, players, turn, first_move=None):
-#         print('depth', current_depth)
-#         board.draw_board()
-#         current_player = players[turn % len(players)]
-#         # print(board)
-#         valid_moves = current_player.get_valid_moves(board, first_move=first_move)
-#         if current_depth == self.max_depth or not valid_moves:
-#             return current_player.score(), None
+    # def _minimax(self, current_depth, board, players, turn, first_move=None):
+    #     print('depth', current_depth)
+    #     board.draw_board()
+    #     current_player = players[turn % len(players)]
+    #     # print(board)
+    #     valid_moves = current_player.get_valid_moves(board, first_move=first_move)
+    #     if current_depth == self.max_depth or not valid_moves:
+    #         return current_player.score(), None
 
-#         # best_value = float('-inf') if is_max_turn else float('inf')
-#         best_value = float('-inf')
-#         for action_index, (piece_index, piece, x, y) in enumerate(valid_moves):
-#             board_copy = deepcopy(board)
-#             board_copy.place_piece(piece, x, y)
-#             current_player.pieces[piece_index].placed = True
+    #     # best_value = float('-inf') if is_max_turn else float('inf')
+    #     best_value = float('-inf')
+    #     for action_index, (piece_index, piece, x, y) in enumerate(valid_moves):
+    #         board_copy = deepcopy(board)
+    #         board_copy.place_piece(piece, x, y)
+    #         current_player.pieces[piece_index].placed = True
 
-#             child_value, child_action = self._minimax(current_depth+1, board_copy, players, turn+1)
+    #         child_value, child_action = self._minimax(current_depth+1, board_copy, players, turn+1)
 
-#             if best_value < child_value:
-#                 best_value = child_value
-#                 best_action = child_action
-#         print(best_action)
-#         return best_value, best_action
+    #         if best_value < child_value:
+    #             best_value = child_value
+    #             best_action = child_action
+    #     print(best_action)
+    #     return best_value, best_action
+
+    # def maxn(self, board):
+    #     if not self.has_move(board):
+    #         return ()
+
+
+    #     for piece_index, piece, x, y in self.get_valid_moves(board):
+
+    #         board_copy = deepcopy(board)
+    #         board_copy.place_piece(piece, x, y)
+    #         self.maxn()
+
 
 
 class Board:
@@ -287,22 +313,32 @@ class Board:
                 if piece_tile != 0:
                     self.state[y+y_offset][x+x_offset] += piece.owner
 
+    def number_of_empty_spaces(self):
+        n_empty = 0
+        for row in self.state:
+            for elem in row:
+                if elem == 0:
+                    n_empty += 1
+        return n_empty
+
+
 class Blokus:
     # initial_positions
-    def __init__(self, n_players:int, board_size:Tuple[int], starting_positions:List[Tuple[int]]=None, save_game:bool=False) -> None:
+    def __init__(self, players:List[Player], board_size:Tuple[int], starting_positions:List[Tuple[int]]=None, save_game:bool=False) -> None:
         self.id = str(uuid.uuid4())
         self.save_game = save_game
+        self.turns = []
         if self.save_game:
             self.folder = os.path.join('games', self.id)
             self.turns_folder = os.path.join(self.folder, 'turns')
             os.makedirs(self.folder)
             os.makedirs(self.turns_folder)
 
-        if n_players > 4:
+        if len(players) > 4:
             raise Exception('Max of 4 players')
 
-        self.n_players = n_players
-        self.players = [Player(i+1) for i in range(n_players)]
+        self.n_players = len(players)
+        self.players = players
         # self.players = [MaxNPlayer(player_id=i+1, max_depth=5) for i in range(n_players)]
         self.board = Board(board_size[0], board_size[1])
         if not starting_positions:
@@ -317,7 +353,6 @@ class Blokus:
 
         self.play_counter = 0
 
-
     def play(self):
         turn_file_paths = []
         no_plays = {}
@@ -331,8 +366,11 @@ class Blokus:
             piece, piece_x, piece_y = current_player.get_move(self.board, first_move=first_move)
             if piece:
                 self.board.place_piece(piece, piece_x, piece_y)
+                current_player.n_plays += 1
             else:
                 no_plays[current_player.id] = 1
+
+            self.turns.append(self.board.state)
 
             if self.save_game:
                 fig = self.get_board()
@@ -375,14 +413,36 @@ class Blokus:
 
         return fig
 
+    def game_over(self):
+        # no first move game over
+        return all([not player.has_move(self.board) for player in self.players])
+
+    # payoffs = {player.id: 0 for player in self.players}
+
+    # def max_n(self, current_depth, board, payoffs, first_move=False):
+    #     player_index = self.play_counter % self.n_players
+    #     current_player = self.players[player_index]
+    #     if current_depth > 5 or self.game_over():
+    #         return payoffs
+    #     moves = current_player.get_valid_moves(self.board, first_move=first_move)
+    #     move_values = [piece.n_tiles for _, piece, _, _ in moves]
+    #     for move_index, move in moves:
+    #         board_copy = deepcopy(board)
+    #         board_copy.place_piece(move[1],move[2],move[3])
+    #         board_copy.self.play_counter += 1
+    #         payoffs[current_player.id] += move[1].n_tiles
+    #         v = self.max_n(current_depth+1, board_copy, payoffs)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Play a game of blokus.')
     parser.add_argument('--save', dest='save', action='store_const',
                     const=True, default=False,
                     help='save turn files and a gif of the game')
     args = parser.parse_args()
-    game = Blokus(4, (20, 20), save_game=args.save)
+    n_players = 4
+    game = Blokus([Player(i+1) for i in range(n_players)], (20, 20), save_game=args.save)
     game.play()
+
 
 # TODO:
 # store possible next locations in each piece, don't enumerate board
